@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#fff7ef" />
   <title>生日快乐 · 小雨</title>
   <meta name="description" content="把这份祝福，轻轻交到你手上。" />
 
@@ -11,10 +12,8 @@
   <meta property="og:image" content="assets/img/og.jpg" />
   <meta property="og:type" content="website" />
 
-  <link rel="preload" href="assets/img/hero.webp" as="image" />
-  <link rel="preload" href="assets/img/petals.webp" as="image" />
-  <link rel="preload" href="assets/img/texture.webp" as="image" />
-  <link rel="preload" href="assets/audio/bgm.mp3" as="audio" />
+  <!-- 只把首屏最大图（hero）作为高优先级资源 -->
+  <link rel="preload" href="assets/img/hero.webp" as="image" fetchpriority="high" />
 
   <link rel="stylesheet" href="assets/css/styles.css" />
 </head>
@@ -25,7 +24,8 @@
     <canvas id="petals"></canvas>
     <div class="spotlight" id="spotlight"></div>
     <div class="grain"></div>
-    <img class="texture" src="assets/img/texture.webp" alt="" />
+    <!-- 装饰纹理：不再 preload，改为懒加载 + async 解码 -->
+    <img class="texture" src="assets/img/texture.webp" alt="" loading="lazy" decoding="async" />
   </div>
 
   <!-- GLOBAL fireworks overlay (whole-page) -->
@@ -33,10 +33,14 @@
     <canvas id="fireworksGlobal"></canvas>
   </div>
 
-  <!-- audio: best-effort autoplay -->
-  <audio id="bgm" preload="auto" loop autoplay muted playsinline>
-    <source src="assets/audio/bgm.mp3" type="audio/mpeg" />
-  </audio>
+  <!-- audio: 自适应加载（慢网/省流量不提前下载） -->
+  <audio id="bgm"
+         preload="none"
+         loop
+         autoplay
+         muted
+         playsinline
+         data-src="assets/audio/bgm.mp3"></audio>
 
   <!-- top bar -->
   <header class="topbar">
@@ -92,7 +96,16 @@
         </div>
 
         <div class="heroMedia">
-          <img src="assets/img/hero.webp" class="heroImg" alt="温柔明亮的花束主视觉" />
+          <img
+            src="assets/img/hero.webp"
+            class="heroImg"
+            alt="温柔明亮的花束主视觉"
+            decoding="async"
+            fetchpriority="high"
+            loading="eager"
+            width="1600"
+            height="900"
+          />
           <div class="halo" aria-hidden="true"></div>
         </div>
 
@@ -118,7 +131,7 @@
       <div class="envelope" id="envelope">
         <div class="envTop"></div>
         <div class="envBody">
-          <img class="sealImg" src="assets/img/seal.webp" alt="" />
+          <img class="sealImg" src="assets/img/seal.webp" alt="" loading="lazy" decoding="async" />
           <div class="envHint">点击打开</div>
         </div>
       </div>
@@ -146,7 +159,7 @@
         <div class="fireStage">
           <div class="fireStageHint">点亮后，烟花会在整页柔和绽放。</div>
           <div class="fireOverlay" aria-hidden="true">
-            <img src="assets/img/linebouquet.webp" alt="" />
+            <img src="assets/img/linebouquet.webp" alt="" loading="lazy" decoding="async" />
           </div>
         </div>
 
@@ -170,7 +183,7 @@
         <div class="starStage">
           <canvas id="stars" width="980" height="420"></canvas>
           <div class="starOverlay" aria-hidden="true">
-            <img src="assets/img/linebouquet.webp" alt="" />
+            <img src="assets/img/linebouquet.webp" alt="" loading="lazy" decoding="async" />
           </div>
         </div>
 
@@ -235,7 +248,6 @@
         </div>
       </div>
 
-      <!-- bottom small button -->
       <div class="footerBottom">
         <button class="pastBtn" id="pastBtn" type="button">分享过去</button>
       </div>
@@ -286,13 +298,13 @@
         </div>
 
         <div class="pastActions">
-          <a class="btn small ghost" href="PDF.pdf" target="_blank" rel="noopener">打开</a>
-          <a class="btn small" href="PDF.pdf" download="PDF.pdf">下载</a>
+          <a class="btn small ghost" href="./PDF.pdf" target="_blank" rel="noopener">打开</a>
+          <a class="btn small" href="./PDF.pdf" download="PDF.pdf">下载</a>
         </div>
       </div>
     </form>
   </dialog>
 
-  <script src="assets/js/app.js"></script>
+  <script src="assets/js/app.js" defer></script>
 </body>
 </html>

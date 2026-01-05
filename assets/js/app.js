@@ -2,6 +2,12 @@ const $ = (s, el=document) => el.querySelector(s);
 const $$ = (s, el=document) => Array.from(el.querySelectorAll(s));
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const isMobile =
+  window.matchMedia("(max-width: 820px)").matches ||
+  /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+// ⭐ 关键：移动端 cap DPR，避免高分屏 canvas 过重
+const DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.6);
 
 const CONFIG = {
   dateISO: "2026-01-03",
@@ -65,6 +71,14 @@ function scrollToId(id){
   el.scrollIntoView({behavior: reducedMotion ? "auto" : "smooth", block:"start"});
 }
 
+function runIdle(fn, timeout=900){
+  if("requestIdleCallback" in window){
+    window.requestIdleCallback(fn, { timeout });
+  }else{
+    setTimeout(fn, 140);
+  }
+}
+
 /* -----------------------------
    Theme cycle
 ------------------------------ */
@@ -102,7 +116,7 @@ function mountSpotlight(){
 }
 
 /* -----------------------------
-   Audio (best-effort autoplay + unlock on first interaction)
+   Audio (adaptive load)
 ------------------------------ */
 let audioReady = false;
 let audioPlaying = false;
@@ -112,9 +126,28 @@ let audioCtx = null;
 let analyser = null;
 let sourceNode = null;
 
+function shouldPreloadAudio(){
+  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if(!c) return true;
+  if(c.saveData) return false;
+  if(typeof c.effectiveType === "string" && /(^|-)2g|slow-2g/i.test(c.effectiveType)) return false;
+  return true;
+}
+
+function primeAudio(){
+  const audio = $("#bgm");
+  if(!audio) return;
+  if(audio.src) return;
+  const src = audio.dataset.src;
+  if(!src) return;
+  audio.src = src;
+  audio.load();
+}
+
 function setupAudioGraph(){
   if(audioReady) return;
   const audio = $("#bgm");
+  if(!audio || !audio.src) return; // 还没装载就不建图
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
@@ -158,9 +191,11 @@ async function unlockAudioOnce(){
   if(unlocked) return;
   unlocked = true;
 
+  primeAudio();
+  setupAudioGraph();
+
   const audio = $("#bgm");
   try{
-    setupAudioGraph();
     if(audioCtx && audioCtx.state === "suspended") await audioCtx.resume();
 
     if(!audioPlaying){
@@ -245,23 +280,23 @@ function drawViz(){
 }
 
 /* -----------------------------
-   Petals background
+   Petals background (lighter on mobile)
 ------------------------------ */
 function startPetals(){
   const canvas = $("#petals");
   if(!canvas) return;
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { alpha: true });
   const img = new Image();
   img.src = "assets/img/petals.webp";
 
   function resize(){
-    canvas.width = Math.floor(window.innerWidth * devicePixelRatio);
-    canvas.height = Math.floor(window.innerHeight * devicePixelRatio);
+    canvas.width = Math.floor(window.innerWidth * DPR);
+    canvas.height = Math.floor(window.innerHeight * DPR);
   }
   resize();
-  window.addEventListener("resize", resize);
+  window.addEventListener("resize", resize, { passive:true });
 
-  const N = reducedMotion ? 10 : 22;
+  const N = reducedMotion ? 8 : (isMobile ? 14 : 22);
   const petals = Array.from({length:N}).map(()=> spawn());
 
   function spawn(){
@@ -269,11 +304,11 @@ function startPetals(){
     return {
       x: Math.random()*w,
       y: Math.random()*h,
-      s: (0.18 + Math.random()*0.30) * devicePixelRatio,
+      s: (isMobile ? 0.16 : 0.18) + Math.random()*(isMobile ? 0.26 : 0.30),
       r: Math.random()*Math.PI*2,
       vr: (-0.004 + Math.random()*0.008),
-      vx: (0.05 + Math.random()*0.16) * devicePixelRatio,
-      vy: (0.18 + Math.random()*0.46) * devicePixelRatio,
+      vx: (0.05 + Math.random()*(isMobile ? 0.12 : 0.16)) * DPR,
+      vy: (0.18 + Math.random()*(isMobile ? 0.34 : 0.46)) * DPR,
       o: 0.10 + Math.random()*0.18
     };
   }
@@ -286,15 +321,16 @@ function startPetals(){
         p.y += p.vy;
         p.r += p.vr;
 
-        if(p.y > canvas.height + 120*devicePixelRatio || p.x > canvas.width + 140*devicePixelRatio){
-          Object.assign(p, spawn(), { x: -120*devicePixelRatio, y: Math.random()*canvas.height*0.65 });
+        if(p.y > canvas.height + 120*DPR || p.x > canvas.width + 140*DPR){
+          Object.assign(p, spawn(), { x: -120*DPR, y: Math.random()*canvas.height*0.65 });
         }
 
         ctx.save();
         ctx.globalAlpha = p.o;
         ctx.translate(p.x, p.y);
         ctx.rotate(p.r);
-        const size = 220 * p.s;
+        const base = isMobile ? 190 : 220;
+        const size = base * p.s * DPR;
         ctx.drawImage(img, -size/2, -size/2, size, size);
         ctx.restore();
       }
@@ -421,12 +457,11 @@ function mountStars(){
 
   function fit(){
     const cssW = c.clientWidth;
-    const ratio = devicePixelRatio;
-    c.width = Math.floor(cssW * ratio);
-    c.height = Math.floor((cssW * 0.43) * ratio);
+    c.width = Math.floor(cssW * DPR);
+    c.height = Math.floor((cssW * 0.43) * DPR);
     draw();
   }
-  window.addEventListener("resize", fit);
+  window.addEventListener("resize", fit, { passive:true });
 
   const pts = [];
   let last = null;
@@ -444,7 +479,7 @@ function mountStars(){
     ctx.fillStyle = "rgba(255,255,255,.75)";
     ctx.fill();
     ctx.strokeStyle = "rgba(42,34,27,.18)";
-    ctx.lineWidth = 1.5 * devicePixelRatio;
+    ctx.lineWidth = 1.5 * DPR;
     ctx.stroke();
     ctx.restore();
   }
@@ -461,18 +496,18 @@ function mountStars(){
 
     if(pts.length > 1){
       ctx.strokeStyle = "rgba(42,34,27,.20)";
-      ctx.lineWidth = 2 * devicePixelRatio;
+      ctx.lineWidth = 2 * DPR;
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
     }
 
-    for(const p of pts) star(ctx, p.x, p.y, 5*devicePixelRatio, 12*devicePixelRatio, 5);
+    for(const p of pts) star(ctx, p.x, p.y, 5*DPR, 12*DPR, 5);
 
     if(last && !reducedMotion){
       ctx.globalAlpha = 0.32;
-      star(ctx, last.x, last.y, 4*devicePixelRatio, 9*devicePixelRatio, 5);
+      star(ctx, last.x, last.y, 4*DPR, 9*DPR, 5);
       ctx.globalAlpha = 1;
     }
   }
@@ -484,8 +519,8 @@ function mountStars(){
     return {x, y};
   }
 
-  c.addEventListener("mousemove", (ev)=>{ last = getPos(ev); draw(); });
-  c.addEventListener("mouseleave", ()=>{ last = null; draw(); });
+  c.addEventListener("mousemove", (ev)=>{ last = getPos(ev); draw(); }, { passive:true });
+  c.addEventListener("mouseleave", ()=>{ last = null; draw(); }, { passive:true });
   c.addEventListener("click", (ev)=>{
     const p = getPos(ev);
     pts.push({x:p.x, y:p.y});
@@ -547,14 +582,12 @@ function mountSilentUnlock(){
 
 /* -----------------------------
    Fireworks Engine (GLOBAL CANVAS)
-   - additive glow: globalCompositeOperation="lighter"
-   - transparent trails: destination-out fade (no milky overlay)
 ------------------------------ */
 class FireworksEngine{
   constructor(canvas){
     this.c = canvas;
     this.ctx = canvas.getContext("2d");
-    this.dpr = devicePixelRatio || 1;
+    this.dpr = DPR;
     this.running = false;
 
     this.rockets = [];
@@ -562,14 +595,12 @@ class FireworksEngine{
     this.ribbons = [];
     this.lastT = 0;
 
-    // transparent fade strength (higher = quicker fade)
-    this.fade = reducedMotion ? 0.22 : 0.14;
-
+    this.fade = reducedMotion ? 0.22 : (isMobile ? 0.18 : 0.14);
     this.startedOnce = false;
     this.sprite = this._makeSprite();
 
     this._fit();
-    window.addEventListener("resize", ()=> this._fit());
+    window.addEventListener("resize", ()=> this._fit(), { passive:true });
   }
 
   _fit(){
@@ -581,7 +612,7 @@ class FireworksEngine{
 
   _makeSprite(){
     const s = document.createElement("canvas");
-    const size = 96;
+    const size = 88;
     s.width = size; s.height = size;
     const g = s.getContext("2d");
     const cx = size/2, cy = size/2;
@@ -615,7 +646,7 @@ class FireworksEngine{
   }
 
   ignite(show=1){
-    const n = reducedMotion ? 2 : 5;
+    const n = reducedMotion ? 2 : (isMobile ? 3 : 5);
     let count = 0;
     const tick = ()=>{
       this.launch();
@@ -630,50 +661,51 @@ class FireworksEngine{
     const w = this.c.width, h = this.c.height;
     const x = (0.18 + Math.random()*0.64) * w;
     const y = h + 30*this.dpr;
-    const vx = (Math.random()*2-1) * 0.6 * this.dpr;
-    const vy = (- (8.6 + Math.random()*3.0)) * this.dpr;
+    const vx = (Math.random()*2-1) * 0.55 * this.dpr;
+    const vy = (- (8.2 + Math.random()*2.6)) * this.dpr;
     const col = this._palette();
     this.rockets.push({
       x,y,vx,vy,
       ax: (Math.random()*2-1) * 0.008 * this.dpr,
       life: 0,
-      fuse: 52 + Math.random()*26,
+      fuse: 50 + Math.random()*24,
       col
     });
   }
 
   burst(x,y){
     const col = this._palette();
-    const coreN = reducedMotion ? 60 : 140;
-    const ringN = reducedMotion ? 22 : 44;
-    const willowN = reducedMotion ? 18 : 34;
+    const coreN  = reducedMotion ? 50 : (isMobile ? 90 : 140);
+    const ringN  = reducedMotion ? 18 : (isMobile ? 28 : 44);
+    const willowN= reducedMotion ? 14 : (isMobile ? 18 : 34);
 
     for(let i=0;i<coreN;i++){
       const a = Math.random()*Math.PI*2;
-      const sp = (2.2 + Math.random()*5.2) * this.dpr;
-      this.parts.push(this._mkParticle(x,y,Math.cos(a)*sp,Math.sin(a)*sp,col, 54 + Math.random()*26, 0.985));
+      const sp = (2.0 + Math.random()*4.6) * this.dpr;
+      this.parts.push(this._mkParticle(x,y,Math.cos(a)*sp,Math.sin(a)*sp,col, 52 + Math.random()*24, 0.985));
     }
     for(let i=0;i<ringN;i++){
       const a = (i/ringN)*Math.PI*2 + Math.random()*0.12;
-      const sp = (5.6 + Math.random()*1.8) * this.dpr;
+      const sp = (5.2 + Math.random()*1.5) * this.dpr;
       const c2 = this._tint(col, 1.08);
-      this.parts.push(this._mkParticle(x,y,Math.cos(a)*sp,Math.sin(a)*sp,c2, 42 + Math.random()*18, 0.988, 0.95));
+      this.parts.push(this._mkParticle(x,y,Math.cos(a)*sp,Math.sin(a)*sp,c2, 40 + Math.random()*16, 0.988, 0.92));
     }
     for(let i=0;i<willowN;i++){
       const a = Math.random()*Math.PI*2;
-      const sp = (1.6 + Math.random()*2.6) * this.dpr;
+      const sp = (1.5 + Math.random()*2.2) * this.dpr;
       const c3 = this._tint(col, 0.92);
-      this.parts.push(this._mkParticle(x,y,Math.cos(a)*sp,Math.sin(a)*sp - (1.2*this.dpr),c3, 90 + Math.random()*44, 0.992, 0.55, true));
+      this.parts.push(this._mkParticle(x,y,Math.cos(a)*sp,Math.sin(a)*sp - (1.1*this.dpr),c3, 84 + Math.random()*38, 0.992, 0.55, true));
     }
 
-    if(!reducedMotion){
-      const rCount = 3 + Math.floor(Math.random()*3);
+    // ⭐ 移动端减少丝带（更稳）
+    if(!reducedMotion && !isMobile){
+      const rCount = 2 + Math.floor(Math.random()*2);
       for(let i=0;i<rCount;i++){
         this.ribbons.push(this._mkRibbon(x,y,col));
       }
     }
 
-    this.parts.push({ kind:"flash", x,y, life:0, ttl: 10, r: 42*this.dpr, a: 0.9 });
+    this.parts.push({ kind:"flash", x,y, life:0, ttl: 10, r: 40*this.dpr, a: 0.9 });
   }
 
   _tint([r,g,b], k){
@@ -698,11 +730,11 @@ class FireworksEngine{
   }
 
   _mkRibbon(x,y,col){
-    const segs = 34 + Math.floor(Math.random()*18);
-    const amp  = (10 + Math.random()*18) * this.dpr;
-    const len  = (220 + Math.random()*160) * this.dpr;
+    const segs = 28 + Math.floor(Math.random()*14);
+    const amp  = (10 + Math.random()*16) * this.dpr;
+    const len  = (200 + Math.random()*140) * this.dpr;
     const rot  = Math.random()*Math.PI*2;
-    const w = (1.6 + Math.random()*1.2) * this.dpr;
+    const w = (1.6 + Math.random()*1.0) * this.dpr;
 
     return {
       kind:"r",
@@ -714,9 +746,9 @@ class FireworksEngine{
       rot,
       w,
       life:0,
-      ttl: 88 + Math.random()*30,
+      ttl: 80 + Math.random()*26,
       ph: Math.random()*Math.PI*2,
-      drift: (Math.random()*2-1) * 0.35 * this.dpr
+      drift: (Math.random()*2-1) * 0.32 * this.dpr
     };
   }
 
@@ -734,7 +766,7 @@ class FireworksEngine{
     const ctx = this.ctx;
     const w = this.c.width, h = this.c.height;
 
-    // transparent long-exposure fade (no whitening)
+    // transparent long-exposure fade
     ctx.globalCompositeOperation = "destination-out";
     ctx.fillStyle = `rgba(0,0,0,${this.fade})`;
     ctx.fillRect(0,0,w,h);
@@ -748,9 +780,12 @@ class FireworksEngine{
       r.x += r.vx * dt;
       r.y += r.vy * dt;
 
-      if(!reducedMotion && Math.random() < 0.50){
+      if(!reducedMotion && !isMobile && Math.random() < 0.50){
         const c = this._tint(r.col, 1.05);
-        this.parts.push(this._mkParticle(r.x, r.y, (Math.random()*2-1)*0.6*this.dpr, (Math.random()*2-1)*0.6*this.dpr, c, 24+Math.random()*14, 0.92, 0.28));
+        this.parts.push(this._mkParticle(r.x, r.y,
+          (Math.random()*2-1)*0.6*this.dpr,
+          (Math.random()*2-1)*0.6*this.dpr,
+          c, 24+Math.random()*14, 0.92, 0.28));
       }
 
       ctx.globalCompositeOperation = "lighter";
@@ -793,7 +828,7 @@ class FireworksEngine{
       p.vy *= Math.pow(p.drag, dt);
       p.vy += p.g * dt;
 
-      if(p.willow && !reducedMotion){
+      if(p.willow && !reducedMotion && !isMobile){
         p.tw += 0.08*dt;
         p.vx += Math.sin(p.tw) * 0.02 * this.dpr;
       }
@@ -827,13 +862,13 @@ class FireworksEngine{
     ctx.globalAlpha = a;
     ctx.translate(x,y);
 
-    const halo = sz*34;
+    const halo = sz*32;
     ctx.fillStyle = this._rgba(col, 0.10*a);
     ctx.beginPath();
     ctx.arc(0,0,halo,0,Math.PI*2);
     ctx.fill();
 
-    const k = sz*24;
+    const k = sz*22;
     ctx.drawImage(s, -k/2, -k/2, k, k);
     ctx.restore();
   }
@@ -893,7 +928,7 @@ class FireworksEngine{
 
     ctx.globalAlpha = 0.18*a;
     ctx.strokeStyle = this._rgba(col, 0.55);
-    ctx.lineWidth = (w*7.2);
+    ctx.lineWidth = (w*7.0);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.beginPath();
@@ -903,7 +938,7 @@ class FireworksEngine{
 
     ctx.globalAlpha = 0.42*a;
     ctx.strokeStyle = this._rgba(col, 0.72);
-    ctx.lineWidth = (w*3.1);
+    ctx.lineWidth = (w*3.0);
     ctx.beginPath();
     ctx.moveTo(pts[0][0],pts[0][1]);
     for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
@@ -911,7 +946,7 @@ class FireworksEngine{
 
     ctx.globalAlpha = 0.38*a;
     ctx.strokeStyle = "rgba(255,255,255,.55)";
-    ctx.lineWidth = (w*1.15);
+    ctx.lineWidth = (w*1.12);
     ctx.beginPath();
     ctx.moveTo(pts[0][0],pts[0][1]);
     for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
@@ -927,11 +962,9 @@ function mountFireworks(){
   if(!c) return;
   fw = new FireworksEngine(c);
 
-  const ignite = ()=> fw.ignite(1);
-  $("#igniteBtn")?.addEventListener("click", ignite);
+  $("#igniteBtn")?.addEventListener("click", ()=> fw.ignite(1));
   $("#igniteMoreBtn")?.addEventListener("click", ()=> fw.ignite(2));
 
-  // auto ignite when section enters viewport
   const sec = $("#fireworksSection");
   if(!sec) return;
 
@@ -954,7 +987,7 @@ function birthdaySparkle(){
   if(today !== CONFIG.dateISO) return;
   if(reducedMotion) return;
 
-  const n = 18;
+  const n = isMobile ? 10 : 18;
   for(let i=0;i<n;i++){
     const d = document.createElement("div");
     d.style.position="fixed";
@@ -994,22 +1027,29 @@ function birthdaySparkle(){
 function init(){
   applyTheme(0);
   mountSpotlight();
-
   mountNav();
   bindLetter();
   bindPast();
-
   mountWhispers();
-  mountStars();
-  mountFireworks();
 
-  startPetals();
+  // 音频：快网可提前装载并尝试静音自动播放
+  if(shouldPreloadAudio()){
+    primeAudio();
+    setupAudioGraph();
+    tryAutoPlayMuted();
+  }else{
+    // 慢网/省流量：不抢首屏
+    $("#musicIcon").textContent = "♪";
+    $("#musicText").textContent = "轻音乐";
+  }
 
-  tryAutoPlayMuted();
   mountSilentUnlock();
-
-  setupAudioGraph();
   drawViz();
+
+  // 重活延后：保证手机首屏先出来
+  runIdle(()=> startPetals(), 1200);
+  runIdle(()=> mountStars(), 1200);
+  runIdle(()=> mountFireworks(), 1400);
 
   birthdaySparkle();
 }
