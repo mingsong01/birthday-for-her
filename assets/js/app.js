@@ -6,8 +6,7 @@ const isMobile =
   window.matchMedia("(max-width: 820px)").matches ||
   /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
-// ⭐ 关键：移动端 cap DPR，避免高分屏 canvas 过重
-const DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.6);
+const DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 1.2 : 1.6);
 
 const CONFIG = {
   dateISO: "2026-01-03",
@@ -70,69 +69,36 @@ function scrollToId(id){
   if(!el) return;
   el.scrollIntoView({behavior: reducedMotion ? "auto" : "smooth", block:"start"});
 }
-
 function runIdle(fn, timeout=900){
   if("requestIdleCallback" in window){
     window.requestIdleCallback(fn, { timeout });
   }else{
-    setTimeout(fn, 140);
+    setTimeout(fn, 120);
   }
 }
 
 /* -----------------------------
-   Theme cycle
+   纹理延迟加载（不抢首屏）
 ------------------------------ */
-const themes = [
-  { name:"奶油", vars: { "--bg0":"#fff7ef", "--bg1":"#f6fbff", "--a":"#ffd6e8", "--b":"#cfe8ff", "--c":"#dff6ea", "--d":"#fff1cc", "--e":"#e7dcff" } },
-  { name:"雾蓝", vars: { "--bg0":"#f7fbff", "--bg1":"#fff8f1", "--a":"#ffe2ec", "--b":"#cde3ff", "--c":"#def7f0", "--d":"#fff0d7", "--e":"#e9e1ff" } },
-  { name:"香槟", vars: { "--bg0":"#fffaf3", "--bg1":"#f7fbff", "--a":"#ffd8e8", "--b":"#d7eaff", "--c":"#e3f7ee", "--d":"#fff3cf", "--e":"#efe7ff" } }
-];
-let themeIdx = 0;
-function applyTheme(idx){
-  themeIdx = (idx + themes.length) % themes.length;
-  const t = themes[themeIdx];
-  Object.entries(t.vars).forEach(([k,v])=> document.documentElement.style.setProperty(k,v));
-  $("#themeBtn span:last-child").textContent = `柔光主题·${t.name}`;
+function loadTextureAfterLoad(){
+  const img = $(".texture");
+  if(!img) return;
+  const src = img.dataset.src;
+  if(!src) return;
+  // 等 load 后再在 idle 设置 src
+  window.addEventListener("load", ()=>{
+    runIdle(()=>{ img.src = src; }, 1200);
+  }, { once:true });
 }
 
 /* -----------------------------
-   Spotlight
+   音频：移动端需要用户手势解锁
 ------------------------------ */
-function mountSpotlight(){
-  const s = $("#spotlight");
-  if(!s) return;
-  let x = 20, y = 20;
-  function set(){
-    s.style.background = `radial-gradient(520px 340px at ${x}% ${y}%, rgba(255,255,255,.58), transparent 62%)`;
-  }
-  set();
-  window.addEventListener("pointermove", (e)=>{
-    const xx = (e.clientX / window.innerWidth) * 100;
-    const yy = (e.clientY / window.innerHeight) * 100;
-    x = x + (xx - x) * 0.06;
-    y = y + (yy - y) * 0.06;
-    set();
-  }, {passive:true});
-}
-
-/* -----------------------------
-   Audio (adaptive load)
------------------------------- */
-let audioReady = false;
-let audioPlaying = false;
-let unlocked = false;
-
 let audioCtx = null;
 let analyser = null;
 let sourceNode = null;
-
-function shouldPreloadAudio(){
-  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  if(!c) return true;
-  if(c.saveData) return false;
-  if(typeof c.effectiveType === "string" && /(^|-)2g|slow-2g/i.test(c.effectiveType)) return false;
-  return true;
-}
+let audioReady = false;
+let audioPlaying = false;
 
 function primeAudio(){
   const audio = $("#bgm");
@@ -141,13 +107,12 @@ function primeAudio(){
   const src = audio.dataset.src;
   if(!src) return;
   audio.src = src;
-  audio.load();
 }
 
-function setupAudioGraph(){
+function setupAudioGraphIfNeeded(){
   if(audioReady) return;
   const audio = $("#bgm");
-  if(!audio || !audio.src) return; // 还没装载就不建图
+  if(!audio || !audio.src) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
@@ -157,25 +122,15 @@ function setupAudioGraph(){
   audioReady = true;
 }
 
-async function tryAutoPlayMuted(){
-  const audio = $("#bgm");
-  try{
-    audio.muted = true;
-    audio.volume = 0.0;
-    const p = audio.play();
-    if(p && typeof p.then === "function") await p;
-    audioPlaying = true;
-    $("#musicIcon").textContent = "Ⅱ";
-    $("#musicText").textContent = "已播放";
-  }catch{
-    audioPlaying = false;
-    $("#musicIcon").textContent = "♪";
-    $("#musicText").textContent = "轻音乐";
-  }
+function showSoundGate(show){
+  const gate = $("#soundGate");
+  if(!gate) return;
+  gate.classList.toggle("show", !!show);
 }
 
 function fadeVolumeTo(target, ms=900){
   const audio = $("#bgm");
+  if(!audio) return;
   const start = audio.volume;
   const t0 = performance.now();
   function step(t){
@@ -187,55 +142,110 @@ function fadeVolumeTo(target, ms=900){
   requestAnimationFrame(step);
 }
 
-async function unlockAudioOnce(){
-  if(unlocked) return;
-  unlocked = true;
-
-  primeAudio();
-  setupAudioGraph();
-
+/**
+ * 关键：把“play + unmute”放在用户点击事件的同步栈中
+ * 否则移动端会 NotAllowedError。:contentReference[oaicite:4]{index=4}
+ */
+function unlockAndPlayFromGesture(){
   const audio = $("#bgm");
-  try{
-    if(audioCtx && audioCtx.state === "suspended") await audioCtx.resume();
+  if(!audio) return;
 
-    if(!audioPlaying){
-      const p = audio.play();
-      if(p && typeof p.then === "function") await p;
+  try{
+    primeAudio();
+    setupAudioGraphIfNeeded();
+
+    // iOS/Chrome 更稳：先 volume=0，然后 play，再渐入
+    audio.muted = false;
+    audio.volume = 0.0;
+
+    const p = audio.play(); // 必须由手势触发
+    audioPlaying = true;
+
+    $("#musicIcon").textContent = "Ⅱ";
+    $("#musicText").textContent = "已播放";
+    $("#musicBtn")?.classList.remove("pulse");
+
+    if(audioCtx && audioCtx.state === "suspended"){
+      // 也在同一次手势里 resume
+      audioCtx.resume().catch(()=>{});
+    }
+
+    // play() 可能被拒绝（返回 Promise），要捕获
+    if(p && typeof p.catch === "function"){
+      p.catch(()=>{
+        audioPlaying = false;
+        $("#musicIcon").textContent = "♪";
+        $("#musicText").textContent = "轻音乐";
+        $("#musicBtn")?.classList.add("pulse");
+        showSoundGate(true);
+      });
+    }
+
+    fadeVolumeTo(0.55, 900);
+    showSoundGate(false);
+  }catch{
+    showSoundGate(true);
+  }
+}
+
+function toggleAudio(){
+  const audio = $("#bgm");
+  if(!audio) return;
+
+  // 如果还没能播放，就直接走解锁流程（让用户一次点击就能解决）
+  if(!audioPlaying){
+    unlockAndPlayFromGesture();
+    return;
+  }
+
+  try{
+    if(audio.paused){
+      audio.play();
       audioPlaying = true;
       $("#musicIcon").textContent = "Ⅱ";
       $("#musicText").textContent = "已播放";
-    }
-
-    audio.muted = false;
-    fadeVolumeTo(0.55, 950);
-    $("#musicBtn").classList.remove("pulse");
-  }catch{}
-}
-
-async function toggleAudio(){
-  const audio = $("#bgm");
-  try{
-    await unlockAudioOnce();
-    if(audioPlaying){
+      $("#musicBtn")?.classList.remove("pulse");
+    }else{
       audio.pause();
       audioPlaying = false;
       $("#musicIcon").textContent = "♪";
       $("#musicText").textContent = "轻音乐";
-      $("#musicBtn").classList.add("pulse");
-    }else{
-      const p = audio.play();
-      if(p && typeof p.then === "function") await p;
-      audioPlaying = true;
-      audio.muted = false;
-      fadeVolumeTo(0.55, 650);
-      $("#musicIcon").textContent = "Ⅱ";
-      $("#musicText").textContent = "已播放";
-      $("#musicBtn").classList.remove("pulse");
+      $("#musicBtn")?.classList.add("pulse");
+      showSoundGate(true);
     }
-  }catch{}
+  }catch{
+    showSoundGate(true);
+  }
 }
 
-/* Visualizer */
+/* 静音自动播放：能成就成，不成就优雅提示用户点一下 */
+async function tryMutedAutoplay(){
+  const audio = $("#bgm");
+  if(!audio) return;
+
+  try{
+    primeAudio();
+    audio.muted = true;
+    audio.volume = 0.0;
+
+    const p = audio.play();
+    if(p && typeof p.then === "function") await p;
+
+    // 静音播放成功：显示“已就绪”，但仍需用户手势才能开声（多数浏览器如此）
+    audioPlaying = true;
+    $("#musicIcon").textContent = "Ⅱ";
+    $("#musicText").textContent = "已就绪";
+    $("#musicBtn")?.classList.remove("pulse");
+
+    // 给用户一个极简入口开启声音
+    showSoundGate(true);
+  }catch{
+    // 被拦截：直接提示点一下
+    showSoundGate(true);
+  }
+}
+
+/* Visualizer（无音频时也不阻塞） */
 function roundRect(ctx, x, y, w, h, r){
   const rr = Math.min(r, w/2, h/2);
   ctx.beginPath();
@@ -280,7 +290,27 @@ function drawViz(){
 }
 
 /* -----------------------------
-   Petals background (lighter on mobile)
+   Spotlight
+------------------------------ */
+function mountSpotlight(){
+  const s = $("#spotlight");
+  if(!s) return;
+  let x = 20, y = 20;
+  function set(){
+    s.style.background = `radial-gradient(520px 340px at ${x}% ${y}%, rgba(255,255,255,.58), transparent 62%)`;
+  }
+  set();
+  window.addEventListener("pointermove", (e)=>{
+    const xx = (e.clientX / window.innerWidth) * 100;
+    const yy = (e.clientY / window.innerHeight) * 100;
+    x = x + (xx - x) * 0.06;
+    y = y + (yy - y) * 0.06;
+    set();
+  }, {passive:true});
+}
+
+/* -----------------------------
+   Petals：更晚启动（hero load 后再 idle）
 ------------------------------ */
 function startPetals(){
   const canvas = $("#petals");
@@ -296,7 +326,7 @@ function startPetals(){
   resize();
   window.addEventListener("resize", resize, { passive:true });
 
-  const N = reducedMotion ? 8 : (isMobile ? 14 : 22);
+  const N = reducedMotion ? 6 : (isMobile ? 10 : 18);
   const petals = Array.from({length:N}).map(()=> spawn());
 
   function spawn(){
@@ -304,11 +334,11 @@ function startPetals(){
     return {
       x: Math.random()*w,
       y: Math.random()*h,
-      s: (isMobile ? 0.16 : 0.18) + Math.random()*(isMobile ? 0.26 : 0.30),
+      s: (isMobile ? 0.16 : 0.18) + Math.random()*(isMobile ? 0.22 : 0.28),
       r: Math.random()*Math.PI*2,
       vr: (-0.004 + Math.random()*0.008),
-      vx: (0.05 + Math.random()*(isMobile ? 0.12 : 0.16)) * DPR,
-      vy: (0.18 + Math.random()*(isMobile ? 0.34 : 0.46)) * DPR,
+      vx: (0.05 + Math.random()*(isMobile ? 0.10 : 0.14)) * DPR,
+      vy: (0.18 + Math.random()*(isMobile ? 0.30 : 0.42)) * DPR,
       o: 0.10 + Math.random()*0.18
     };
   }
@@ -329,7 +359,7 @@ function startPetals(){
         ctx.globalAlpha = p.o;
         ctx.translate(p.x, p.y);
         ctx.rotate(p.r);
-        const base = isMobile ? 190 : 220;
+        const base = isMobile ? 170 : 210;
         const size = base * p.s * DPR;
         ctx.drawImage(img, -size/2, -size/2, size, size);
         ctx.restore();
@@ -344,8 +374,7 @@ function startPetals(){
    Letter
 ------------------------------ */
 function openLetter(){
-  const dlg = $("#letterDlg");
-  dlg?.showModal();
+  $("#letterDlg")?.showModal();
 }
 function bindLetter(){
   $("#openLetterBtn")?.addEventListener("click", openLetter);
@@ -356,18 +385,14 @@ function bindLetter(){
   });
 }
 
-/* -----------------------------
-   Past dialog
------------------------------- */
+/* Past */
 function bindPast(){
   $("#pastBtn")?.addEventListener("click", ()=>{
     $("#pastDlg")?.showModal();
   });
 }
 
-/* -----------------------------
-   Whispers + generator
------------------------------- */
+/* Whispers */
 function mountWhispers(){
   const qEl = $("#quoteText");
   const sEl = $("#quoteSign");
@@ -391,31 +416,23 @@ function mountWhispers(){
   $("#newWishBtn")?.addEventListener("click", setWish);
 
   $("#copyQuoteBtn")?.addEventListener("click", async ()=>{
-    const t = qEl.textContent.trim();
-    await navigator.clipboard.writeText(t);
+    await navigator.clipboard.writeText(qEl.textContent.trim());
   });
 
   const active = new Set();
   $$(".chipBtn").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const k = btn.dataset.k;
-      if(active.has(k)){
-        active.delete(k);
-        btn.classList.remove("active");
-      }else{
-        active.add(k);
-        btn.classList.add("active");
-      }
+      btn.classList.toggle("active");
+      if(btn.classList.contains("active")) active.add(k); else active.delete(k);
     });
   });
 
   $("#composeBtn")?.addEventListener("click", ()=>{
     const keys = [...active];
-    const out = $("#composerOut");
-    out.textContent = composeLine(keys);
+    $("#composerOut").textContent = composeLine(keys);
   });
 }
-
 function composeLine(keys){
   const head = rand([
     "愿你在新的一岁里",
@@ -423,19 +440,8 @@ function composeLine(keys){
     "愿你一直被温柔照亮",
     "愿你心里始终有光"
   ]);
-
-  const midMap = {
-    "明亮":"更明亮",
-    "自由":"更自由",
-    "浪漫":"更浪漫",
-    "从容":"更从容",
-    "好运":"更好运"
-  };
-
-  const mid = keys.length
-    ? ("也愿你 " + keys.map(k=>midMap[k]||k).join("、") + "。")
-    : "也愿你更笃定、更自在。";
-
+  const midMap = { "明亮":"更明亮", "自由":"更自由", "浪漫":"更浪漫", "从容":"更从容", "好运":"更好运" };
+  const mid = keys.length ? ("也愿你 " + keys.map(k=>midMap[k]||k).join("、") + "。") : "也愿你更笃定、更自在。";
   const tail = rand([
     "不必很用力，也能被世界认真喜欢。",
     "把热爱留给自己，把答案交给时间。",
@@ -443,13 +449,10 @@ function composeLine(keys){
     "所有美好，都在路上向你靠近。",
     "愿你常明，也愿你有松风作伴。"
   ]);
-
   return `${head}，${mid}${tail}`;
 }
 
-/* -----------------------------
-   Stars canvas
------------------------------- */
+/* Stars（延迟启动） */
 function mountStars(){
   const c = $("#stars");
   if(!c) return;
@@ -466,7 +469,7 @@ function mountStars(){
   const pts = [];
   let last = null;
 
-  function star(ctx, x, y, innerR, outerR, points){
+  function star(x, y, innerR, outerR, points){
     ctx.save();
     ctx.translate(x,y);
     ctx.beginPath();
@@ -487,7 +490,6 @@ function mountStars(){
   function draw(){
     const w = c.width, h = c.height;
     ctx.clearRect(0,0,w,h);
-
     const g = ctx.createRadialGradient(w*0.2,h*0.2,10,w*0.2,h*0.2,w*0.9);
     g.addColorStop(0, "rgba(255,214,232,.20)");
     g.addColorStop(1, "rgba(207,232,255,.10)");
@@ -502,12 +504,11 @@ function mountStars(){
       for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
     }
-
-    for(const p of pts) star(ctx, p.x, p.y, 5*DPR, 12*DPR, 5);
+    for(const p of pts) star(p.x, p.y, 5*DPR, 12*DPR, 5);
 
     if(last && !reducedMotion){
       ctx.globalAlpha = 0.32;
-      star(ctx, last.x, last.y, 4*DPR, 9*DPR, 5);
+      star(last.x, last.y, 4*DPR, 9*DPR, 5);
       ctx.globalAlpha = 1;
     }
   }
@@ -522,8 +523,7 @@ function mountStars(){
   c.addEventListener("mousemove", (ev)=>{ last = getPos(ev); draw(); }, { passive:true });
   c.addEventListener("mouseleave", ()=>{ last = null; draw(); }, { passive:true });
   c.addEventListener("click", (ev)=>{
-    const p = getPos(ev);
-    pts.push({x:p.x, y:p.y});
+    pts.push(getPos(ev));
     if(pts.length > 16) pts.shift();
     draw();
   });
@@ -540,48 +540,7 @@ function mountStars(){
 }
 
 /* -----------------------------
-   Share
------------------------------- */
-async function sharePage(){
-  const url = location.href;
-  const data = { title: "生日快乐 · 小雨", text: "把这份祝福，轻轻交到你手上。", url };
-  if(navigator.share){
-    try{ await navigator.share(data); return; }catch{}
-  }
-  await navigator.clipboard.writeText(url);
-}
-
-/* -----------------------------
-   Nav bindings
------------------------------- */
-function mountNav(){
-  $("#brandBtn")?.addEventListener("click", ()=> scrollToId("top"));
-  $("#toTopBtn")?.addEventListener("click", ()=> scrollToId("top"));
-  $("#scrollBtn")?.addEventListener("click", ()=>{
-    const first = document.getElementById("letterSection");
-    first?.scrollIntoView({behavior: reducedMotion ? "auto":"smooth"});
-  });
-
-  $("#themeBtn")?.addEventListener("click", ()=> applyTheme(themeIdx+1));
-  $("#musicBtn")?.addEventListener("click", toggleAudio);
-  $("#shareBtn")?.addEventListener("click", sharePage);
-}
-
-/* -----------------------------
-   Silent unlock for audio
------------------------------- */
-function mountSilentUnlock(){
-  const handler = async ()=>{
-    await unlockAudioOnce();
-    window.removeEventListener("pointerdown", handler, true);
-    window.removeEventListener("keydown", handler, true);
-  };
-  window.addEventListener("pointerdown", handler, true);
-  window.addEventListener("keydown", handler, true);
-}
-
-/* -----------------------------
-   Fireworks Engine (GLOBAL CANVAS)
+   Fireworks：直到滚动接近模块才创建引擎
 ------------------------------ */
 class FireworksEngine{
   constructor(canvas){
@@ -589,43 +548,33 @@ class FireworksEngine{
     this.ctx = canvas.getContext("2d");
     this.dpr = DPR;
     this.running = false;
-
     this.rockets = [];
     this.parts = [];
     this.ribbons = [];
     this.lastT = 0;
 
-    this.fade = reducedMotion ? 0.22 : (isMobile ? 0.18 : 0.14);
+    this.fade = reducedMotion ? 0.22 : (isMobile ? 0.20 : 0.14);
     this.startedOnce = false;
-    this.sprite = this._makeSprite();
 
     this._fit();
     window.addEventListener("resize", ()=> this._fit(), { passive:true });
   }
 
   _fit(){
-    const w = Math.floor(window.innerWidth * this.dpr);
-    const h = Math.floor(window.innerHeight * this.dpr);
-    this.c.width = w;
-    this.c.height = h;
+    this.c.width = Math.floor(window.innerWidth * this.dpr);
+    this.c.height = Math.floor(window.innerHeight * this.dpr);
   }
 
-  _makeSprite(){
-    const s = document.createElement("canvas");
-    const size = 88;
-    s.width = size; s.height = size;
-    const g = s.getContext("2d");
-    const cx = size/2, cy = size/2;
-    const grad = g.createRadialGradient(cx,cy,0,cx,cy,size/2);
-    grad.addColorStop(0.00, "rgba(255,255,255,1)");
-    grad.addColorStop(0.22, "rgba(255,255,255,.95)");
-    grad.addColorStop(0.50, "rgba(255,255,255,.26)");
-    grad.addColorStop(1.00, "rgba(255,255,255,0)");
-    g.fillStyle = grad;
-    g.beginPath();
-    g.arc(cx,cy,size/2,0,Math.PI*2);
-    g.fill();
-    return s;
+  ignite(mult=1){
+    const n = reducedMotion ? 2 : (isMobile ? 3 : 5);
+    let count = 0;
+    const tick = ()=>{
+      this.launch();
+      count++;
+      if(count < n*mult) setTimeout(tick, 420 + Math.random()*240);
+    };
+    tick();
+    this._ensureRun();
   }
 
   _palette(){
@@ -645,18 +594,6 @@ class FireworksEngine{
     ];
   }
 
-  ignite(show=1){
-    const n = reducedMotion ? 2 : (isMobile ? 3 : 5);
-    let count = 0;
-    const tick = ()=>{
-      this.launch();
-      count++;
-      if(count < n*show) setTimeout(tick, 420 + Math.random()*240);
-    };
-    tick();
-    this._ensureRun();
-  }
-
   launch(){
     const w = this.c.width, h = this.c.height;
     const x = (0.18 + Math.random()*0.64) * w;
@@ -664,92 +601,28 @@ class FireworksEngine{
     const vx = (Math.random()*2-1) * 0.55 * this.dpr;
     const vy = (- (8.2 + Math.random()*2.6)) * this.dpr;
     const col = this._palette();
-    this.rockets.push({
-      x,y,vx,vy,
-      ax: (Math.random()*2-1) * 0.008 * this.dpr,
-      life: 0,
-      fuse: 50 + Math.random()*24,
-      col
-    });
+    this.rockets.push({ x,y,vx,vy, ax:(Math.random()*2-1)*0.008*this.dpr, life:0, fuse:50+Math.random()*24, col });
   }
 
   burst(x,y){
     const col = this._palette();
-    const coreN  = reducedMotion ? 50 : (isMobile ? 90 : 140);
-    const ringN  = reducedMotion ? 18 : (isMobile ? 28 : 44);
-    const willowN= reducedMotion ? 14 : (isMobile ? 18 : 34);
+    const coreN  = reducedMotion ? 40 : (isMobile ? 70 : 120);
 
     for(let i=0;i<coreN;i++){
       const a = Math.random()*Math.PI*2;
-      const sp = (2.0 + Math.random()*4.6) * this.dpr;
-      this.parts.push(this._mkParticle(x,y,Math.cos(a)*sp,Math.sin(a)*sp,col, 52 + Math.random()*24, 0.985));
+      const sp = (2.0 + Math.random()*4.2) * this.dpr;
+      this.parts.push({
+        x,y, px:x, py:y,
+        vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+        life:0, ttl: 52 + Math.random()*24,
+        drag: 0.986,
+        g: (0.11 + Math.random()*0.06) * this.dpr,
+        col,
+        a: 0.72,
+        s: (0.55 + Math.random()*0.75) * this.dpr
+      });
     }
-    for(let i=0;i<ringN;i++){
-      const a = (i/ringN)*Math.PI*2 + Math.random()*0.12;
-      const sp = (5.2 + Math.random()*1.5) * this.dpr;
-      const c2 = this._tint(col, 1.08);
-      this.parts.push(this._mkParticle(x,y,Math.cos(a)*sp,Math.sin(a)*sp,c2, 40 + Math.random()*16, 0.988, 0.92));
-    }
-    for(let i=0;i<willowN;i++){
-      const a = Math.random()*Math.PI*2;
-      const sp = (1.5 + Math.random()*2.2) * this.dpr;
-      const c3 = this._tint(col, 0.92);
-      this.parts.push(this._mkParticle(x,y,Math.cos(a)*sp,Math.sin(a)*sp - (1.1*this.dpr),c3, 84 + Math.random()*38, 0.992, 0.55, true));
-    }
-
-    // ⭐ 移动端减少丝带（更稳）
-    if(!reducedMotion && !isMobile){
-      const rCount = 2 + Math.floor(Math.random()*2);
-      for(let i=0;i<rCount;i++){
-        this.ribbons.push(this._mkRibbon(x,y,col));
-      }
-    }
-
     this.parts.push({ kind:"flash", x,y, life:0, ttl: 10, r: 40*this.dpr, a: 0.9 });
-  }
-
-  _tint([r,g,b], k){
-    return [clamp(r*k,0,255), clamp(g*k,0,255), clamp(b*k,0,255)];
-  }
-
-  _mkParticle(x,y,vx,vy,col,ttl,drag=0.988, alpha=0.78, isWillow=false){
-    return {
-      kind:"p",
-      x,y,vx,vy,
-      px:x,py:y,
-      life:0, ttl,
-      drag,
-      g: (0.11 + Math.random()*0.06) * this.dpr,
-      col,
-      a: alpha,
-      s: (0.55 + Math.random()*0.75) * this.dpr,
-      flick: 0.85 + Math.random()*0.30,
-      willow: isWillow,
-      tw: Math.random()*Math.PI*2
-    };
-  }
-
-  _mkRibbon(x,y,col){
-    const segs = 28 + Math.floor(Math.random()*14);
-    const amp  = (10 + Math.random()*16) * this.dpr;
-    const len  = (200 + Math.random()*140) * this.dpr;
-    const rot  = Math.random()*Math.PI*2;
-    const w = (1.6 + Math.random()*1.0) * this.dpr;
-
-    return {
-      kind:"r",
-      x,y,
-      col,
-      segs,
-      amp,
-      len,
-      rot,
-      w,
-      life:0,
-      ttl: 80 + Math.random()*26,
-      ph: Math.random()*Math.PI*2,
-      drift: (Math.random()*2-1) * 0.32 * this.dpr
-    };
   }
 
   _ensureRun(){
@@ -759,6 +632,8 @@ class FireworksEngine{
     requestAnimationFrame((t)=> this._frame(t));
   }
 
+  _rgba([r,g,b], a){ return `rgba(${r|0},${g|0},${b|0},${a})`; }
+
   _frame(t){
     const dt = clamp((t - this.lastT)/16.666, 0.6, 2.2);
     this.lastT = t;
@@ -766,7 +641,6 @@ class FireworksEngine{
     const ctx = this.ctx;
     const w = this.c.width, h = this.c.height;
 
-    // transparent long-exposure fade
     ctx.globalCompositeOperation = "destination-out";
     ctx.fillStyle = `rgba(0,0,0,${this.fade})`;
     ctx.fillRect(0,0,w,h);
@@ -780,16 +654,11 @@ class FireworksEngine{
       r.x += r.vx * dt;
       r.y += r.vy * dt;
 
-      if(!reducedMotion && !isMobile && Math.random() < 0.50){
-        const c = this._tint(r.col, 1.05);
-        this.parts.push(this._mkParticle(r.x, r.y,
-          (Math.random()*2-1)*0.6*this.dpr,
-          (Math.random()*2-1)*0.6*this.dpr,
-          c, 24+Math.random()*14, 0.92, 0.28));
-      }
-
       ctx.globalCompositeOperation = "lighter";
-      this._drawGlow(r.x, r.y, r.col, 0.85, 1.35*this.dpr);
+      ctx.fillStyle = this._rgba(r.col, 0.85);
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, 2.6*this.dpr, 0, Math.PI*2);
+      ctx.fill();
 
       if(r.life > r.fuse || r.vy > -1.5*this.dpr){
         this.burst(r.x, r.y);
@@ -797,19 +666,7 @@ class FireworksEngine{
       }
     }
 
-    // ribbons
-    for(let i=this.ribbons.length-1;i>=0;i--){
-      const rb = this.ribbons[i];
-      rb.life += dt;
-      const k = rb.life / rb.ttl;
-      if(k >= 1){ this.ribbons.splice(i,1); continue; }
-      rb.y += (0.18*this.dpr + k*0.28*this.dpr) * dt;
-      rb.x += rb.drift * dt;
-      rb.ph += 0.06 * dt;
-      this._drawRibbon(rb, 1 - k);
-    }
-
-    // particles
+    // parts
     for(let i=this.parts.length-1;i>=0;i--){
       const p = this.parts[i];
       p.life += dt;
@@ -819,7 +676,15 @@ class FireworksEngine{
       if(p.kind === "flash"){
         ctx.globalCompositeOperation = "lighter";
         const a = (1-k) * p.a;
-        this._drawFlash(p.x,p.y,p.r*(1+0.25*k), a);
+        const r = p.r*(1+0.25*k);
+        const g = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,r);
+        g.addColorStop(0, `rgba(255,255,255,${0.85*a})`);
+        g.addColorStop(0.35, `rgba(255,255,255,${0.18*a})`);
+        g.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,r,0,Math.PI*2);
+        ctx.fill();
         continue;
       }
 
@@ -827,202 +692,111 @@ class FireworksEngine{
       p.vx *= Math.pow(p.drag, dt);
       p.vy *= Math.pow(p.drag, dt);
       p.vy += p.g * dt;
-
-      if(p.willow && !reducedMotion && !isMobile){
-        p.tw += 0.08*dt;
-        p.vx += Math.sin(p.tw) * 0.02 * this.dpr;
-      }
-
       p.x += p.vx * dt;
       p.y += p.vy * dt;
 
       const a = p.a * (1-k);
       ctx.globalCompositeOperation = "lighter";
-      const flick = (0.75 + 0.25*Math.sin((t/1000)*8 + i*0.7)) * p.flick;
-      this._drawTrail(p.px,p.py,p.x,p.y,p.col, a*0.55*flick, p.s*0.70);
-      this._drawGlow(p.x,p.y,p.col, a*flick, p.s);
+
+      ctx.strokeStyle = this._rgba(p.col, 0.45);
+      ctx.lineWidth = Math.max(1.2*this.dpr, 2.8*p.s);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(p.px,p.py);
+      ctx.lineTo(p.x,p.y);
+      ctx.stroke();
+
+      ctx.fillStyle = this._rgba(p.col, a);
+      ctx.beginPath();
+      ctx.arc(p.x,p.y, 2.0*p.s, 0, Math.PI*2);
+      ctx.fill();
     }
 
-    const idle = this.rockets.length===0 && this.parts.length===0 && this.ribbons.length===0;
-    if(idle){
-      this.running = false;
-      return;
-    }
+    const idle = this.rockets.length===0 && this.parts.length===0;
+    if(idle){ this.running = false; return; }
     requestAnimationFrame((tt)=> this._frame(tt));
-  }
-
-  _rgba([r,g,b], a){
-    return `rgba(${r|0},${g|0},${b|0},${a})`;
-  }
-
-  _drawGlow(x,y,col,a,sz){
-    const ctx = this.ctx;
-    const s = this.sprite;
-    ctx.save();
-    ctx.globalAlpha = a;
-    ctx.translate(x,y);
-
-    const halo = sz*32;
-    ctx.fillStyle = this._rgba(col, 0.10*a);
-    ctx.beginPath();
-    ctx.arc(0,0,halo,0,Math.PI*2);
-    ctx.fill();
-
-    const k = sz*22;
-    ctx.drawImage(s, -k/2, -k/2, k, k);
-    ctx.restore();
-  }
-
-  _drawTrail(x0,y0,x1,y1,col,a,w){
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.globalAlpha = a;
-    ctx.strokeStyle = this._rgba(col, 0.55);
-    ctx.lineWidth = Math.max(1.2*this.dpr, 3*w);
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(x0,y0);
-    ctx.lineTo(x1,y1);
-    ctx.stroke();
-
-    ctx.globalAlpha = a*0.82;
-    ctx.strokeStyle = "rgba(255,255,255,.55)";
-    ctx.lineWidth = Math.max(0.9*this.dpr, 1.6*w);
-    ctx.beginPath();
-    ctx.moveTo(x0,y0);
-    ctx.lineTo(x1,y1);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  _drawFlash(x,y,r,a){
-    const ctx = this.ctx;
-    ctx.save();
-    const g = ctx.createRadialGradient(x,y,0,x,y,r);
-    g.addColorStop(0, `rgba(255,255,255,${0.85*a})`);
-    g.addColorStop(0.35, `rgba(255,255,255,${0.18*a})`);
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x,y,r,0,Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  _drawRibbon(rb, a){
-    const ctx = this.ctx;
-    const {x,y,segs,amp,len,rot,w,col} = rb;
-
-    const pts = [];
-    for(let i=0;i<=segs;i++){
-      const t = i/segs;
-      const u = t*len;
-      const wave = Math.sin(rb.ph + t*6.2) * amp * (0.85 - 0.55*t);
-      const xx = x + Math.cos(rot)*u - Math.sin(rot)*wave;
-      const yy = y + Math.sin(rot)*u + Math.cos(rot)*wave;
-      pts.push([xx,yy]);
-    }
-
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-
-    ctx.globalAlpha = 0.18*a;
-    ctx.strokeStyle = this._rgba(col, 0.55);
-    ctx.lineWidth = (w*7.0);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0],pts[0][1]);
-    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
-    ctx.stroke();
-
-    ctx.globalAlpha = 0.42*a;
-    ctx.strokeStyle = this._rgba(col, 0.72);
-    ctx.lineWidth = (w*3.0);
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0],pts[0][1]);
-    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
-    ctx.stroke();
-
-    ctx.globalAlpha = 0.38*a;
-    ctx.strokeStyle = "rgba(255,255,255,.55)";
-    ctx.lineWidth = (w*1.12);
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0],pts[0][1]);
-    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
-    ctx.stroke();
-
-    ctx.restore();
   }
 }
 
 let fw = null;
-function mountFireworks(){
-  const c = $("#fireworksGlobal");
-  if(!c) return;
-  fw = new FireworksEngine(c);
+function mountFireworksOnDemand(){
+  const section = $("#fireworksSection");
+  const canvas = $("#fireworksGlobal");
+  if(!section || !canvas) return;
 
-  $("#igniteBtn")?.addEventListener("click", ()=> fw.ignite(1));
-  $("#igniteMoreBtn")?.addEventListener("click", ()=> fw.ignite(2));
-
-  const sec = $("#fireworksSection");
-  if(!sec) return;
+  const ensure = ()=>{
+    if(fw) return fw;
+    fw = new FireworksEngine(canvas);
+    $("#igniteBtn")?.addEventListener("click", ()=> fw.ignite(1));
+    $("#igniteMoreBtn")?.addEventListener("click", ()=> fw.ignite(2));
+    return fw;
+  };
 
   const obs = new IntersectionObserver((entries)=>{
     for(const e of entries){
-      if(e.isIntersecting && !fw.startedOnce){
-        fw.startedOnce = true;
-        fw.ignite(2);
+      if(e.isIntersecting){
+        const eng = ensure();
+        if(!eng.startedOnce){
+          eng.startedOnce = true;
+          eng.ignite(2);
+        }
       }
     }
-  }, { threshold: 0.35 });
-  obs.observe(sec);
+  }, { threshold: 0.25 });
+
+  obs.observe(section);
 }
 
 /* -----------------------------
-   Birthday sparkle (only on the day)
+   主题 / 导航 / 分享
 ------------------------------ */
-function birthdaySparkle(){
-  const today = new Date().toISOString().slice(0,10);
-  if(today !== CONFIG.dateISO) return;
-  if(reducedMotion) return;
+const themes = [
+  { name:"奶油", vars: { "--bg0":"#fff7ef", "--bg1":"#f6fbff", "--a":"#ffd6e8", "--b":"#cfe8ff", "--c":"#dff6ea", "--d":"#fff1cc", "--e":"#e7dcff" } },
+  { name:"雾蓝", vars: { "--bg0":"#f7fbff", "--bg1":"#fff8f1", "--a":"#ffe2ec", "--b":"#cde3ff", "--c":"#def7f0", "--d":"#fff0d7", "--e":"#e9e1ff" } },
+  { name:"香槟", vars: { "--bg0":"#fffaf3", "--bg1":"#f7fbff", "--a":"#ffd8e8", "--b":"#d7eaff", "--c":"#e3f7ee", "--d":"#fff3cf", "--e":"#efe7ff" } }
+];
+let themeIdx = 0;
+function applyTheme(idx){
+  themeIdx = (idx + themes.length) % themes.length;
+  const t = themes[themeIdx];
+  Object.entries(t.vars).forEach(([k,v])=> document.documentElement.style.setProperty(k,v));
+  $("#themeBtn span:last-child").textContent = `柔光主题·${t.name}`;
+}
 
-  const n = isMobile ? 10 : 18;
-  for(let i=0;i<n;i++){
-    const d = document.createElement("div");
-    d.style.position="fixed";
-    d.style.left = Math.random()*100 + "vw";
-    d.style.top = "-12px";
-    const s = 4 + Math.random()*6;
-    d.style.width = s+"px";
-    d.style.height = s+"px";
-    d.style.borderRadius = "999px";
-    d.style.background = ["rgba(255,214,232,.92)","rgba(207,232,255,.92)","rgba(223,246,234,.92)","rgba(255,241,204,.92)"][Math.floor(Math.random()*4)];
-    d.style.boxShadow = "0 10px 30px rgba(0,0,0,.10)";
-    d.style.zIndex="30";
-    d.style.opacity=".0";
-    d.style.transition="opacity .6s ease";
-    document.body.appendChild(d);
-    requestAnimationFrame(()=> d.style.opacity=".95");
-
-    const v = 0.8 + Math.random()*1.6;
-    const drift = (Math.random()*2-1)*0.08;
-    let top = -12;
-
-    function step(){
-      top += v;
-      d.style.top = top + "px";
-      const left = parseFloat(d.style.left);
-      d.style.left = (left + drift) + "vw";
-      if(top > innerHeight + 40) d.remove();
-      else requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
+async function sharePage(){
+  const url = location.href;
+  const data = { title: "生日快乐 · 小雨", text: "把这份祝福，轻轻交到你手上。", url };
+  if(navigator.share){
+    try{ await navigator.share(data); return; }catch{}
   }
+  await navigator.clipboard.writeText(url);
+}
+
+function mountNav(){
+  $("#brandBtn")?.addEventListener("click", ()=> scrollToId("top"));
+  $("#toTopBtn")?.addEventListener("click", ()=> scrollToId("top"));
+  $("#scrollBtn")?.addEventListener("click", ()=> $("#letterSection")?.scrollIntoView({behavior: reducedMotion ? "auto":"smooth"}));
+
+  $("#themeBtn")?.addEventListener("click", ()=> applyTheme(themeIdx+1));
+  $("#shareBtn")?.addEventListener("click", sharePage);
+
+  // 点击音乐按钮：直接在手势里解锁&播放
+  $("#musicBtn")?.addEventListener("click", toggleAudio);
+
+  // 声音浮层点击：解锁&播放
+  $("#soundGate")?.addEventListener("click", unlockAndPlayFromGesture);
 }
 
 /* -----------------------------
-   Init
+   SW：让第二次打开明显变快
+------------------------------ */
+function registerSW(){
+  if(!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(()=>{});
+}
+
+/* -----------------------------
+   init：把重活尽量后移
 ------------------------------ */
 function init(){
   applyTheme(0);
@@ -1031,27 +805,24 @@ function init(){
   bindLetter();
   bindPast();
   mountWhispers();
+  drawViz();
+  loadTextureAfterLoad();
+  mountFireworksOnDemand();
+  registerSW();
 
-  // 音频：快网可提前装载并尝试静音自动播放
-  if(shouldPreloadAudio()){
-    primeAudio();
-    setupAudioGraph();
-    tryAutoPlayMuted();
+  // 尽力静音 autoplay：能成就成；不成就出现“轻触开启声音”
+  tryMutedAutoplay();
+
+  // hero load 后再启动花瓣（移动端更明显）
+  const hero = $("#heroImg");
+  if(hero){
+    hero.addEventListener("load", ()=> runIdle(()=> startPetals(), 1500), { once:true });
   }else{
-    // 慢网/省流量：不抢首屏
-    $("#musicIcon").textContent = "♪";
-    $("#musicText").textContent = "轻音乐";
+    runIdle(()=> startPetals(), 1500);
   }
 
-  mountSilentUnlock();
-  drawViz();
-
-  // 重活延后：保证手机首屏先出来
-  runIdle(()=> startPetals(), 1200);
-  runIdle(()=> mountStars(), 1200);
-  runIdle(()=> mountFireworks(), 1400);
-
-  birthdaySparkle();
+  // 星图延后（不抢首屏）
+  window.addEventListener("load", ()=> runIdle(()=> mountStars(), 1600), { once:true });
 }
 
 document.addEventListener("DOMContentLoaded", init);

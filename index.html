@@ -12,28 +12,27 @@
   <meta property="og:image" content="assets/img/og.jpg" />
   <meta property="og:type" content="website" />
 
-  <!-- 只把首屏最大图（hero）作为高优先级资源 -->
   <link rel="preload" href="assets/img/hero.webp" as="image" fetchpriority="high" />
-
   <link rel="stylesheet" href="assets/css/styles.css" />
 </head>
 
 <body>
-  <!-- ambient layers -->
+  <!-- 背景层 -->
   <div class="bg" aria-hidden="true">
     <canvas id="petals"></canvas>
     <div class="spotlight" id="spotlight"></div>
     <div class="grain"></div>
-    <!-- 装饰纹理：不再 preload，改为懒加载 + async 解码 -->
-    <img class="texture" src="assets/img/texture.webp" alt="" loading="lazy" decoding="async" />
+
+    <!-- 纹理图：不抢首屏，JS 在 window load 后再真正设置 src -->
+    <img class="texture" data-src="assets/img/texture.webp" alt="" decoding="async" />
   </div>
 
-  <!-- GLOBAL fireworks overlay (whole-page) -->
+  <!-- 全页烟花渲染层 -->
   <div class="fx" aria-hidden="true">
     <canvas id="fireworksGlobal"></canvas>
   </div>
 
-  <!-- audio: 自适应加载（慢网/省流量不提前下载） -->
+  <!-- 音频：移动端几乎一定需要用户手势解锁有声播放 -->
   <audio id="bgm"
          preload="none"
          loop
@@ -42,7 +41,13 @@
          playsinline
          data-src="assets/audio/bgm.mp3"></audio>
 
-  <!-- top bar -->
+  <!-- 声音解锁浮层（只有在自动播放被拦截时才出现） -->
+  <button class="soundGate" id="soundGate" type="button" aria-label="轻触开启声音">
+    <span class="sgIcon">♪</span>
+    <span class="sgText">轻触开启声音</span>
+  </button>
+
+  <!-- 顶部栏 -->
   <header class="topbar">
     <div class="topinner">
       <div class="brand">
@@ -72,7 +77,7 @@
   </header>
 
   <main class="wrap">
-    <!-- hero -->
+    <!-- HERO -->
     <section class="hero" id="top">
       <div class="heroCard">
         <div class="heroMeta">
@@ -105,6 +110,7 @@
             loading="eager"
             width="1600"
             height="900"
+            id="heroImg"
           />
           <div class="halo" aria-hidden="true"></div>
         </div>
@@ -121,7 +127,7 @@
       </div>
     </section>
 
-    <!-- letter -->
+    <!-- LETTER -->
     <section class="section" id="letterSection">
       <div class="sectionHead">
         <h2>给你的一封信</h2>
@@ -131,13 +137,13 @@
       <div class="envelope" id="envelope">
         <div class="envTop"></div>
         <div class="envBody">
-          <img class="sealImg" src="assets/img/seal.webp" alt="" loading="lazy" decoding="async" />
+          <img class="sealImg" src="assets/img/seal.webp" alt="" loading="lazy" decoding="async" width="160" height="160" />
           <div class="envHint">点击打开</div>
         </div>
       </div>
     </section>
 
-    <!-- fireworks (buttons stay here, but fireworks render globally) -->
+    <!-- FIREWORKS -->
     <section class="section" id="fireworksSection">
       <div class="sectionHead">
         <h2>把这一刻点亮</h2>
@@ -159,7 +165,7 @@
         <div class="fireStage">
           <div class="fireStageHint">点亮后，烟花会在整页柔和绽放。</div>
           <div class="fireOverlay" aria-hidden="true">
-            <img src="assets/img/linebouquet.webp" alt="" loading="lazy" decoding="async" />
+            <img src="assets/img/linebouquet.webp" alt="" loading="lazy" decoding="async" width="1200" height="1200" />
           </div>
         </div>
 
@@ -167,7 +173,7 @@
       </div>
     </section>
 
-    <!-- constellation -->
+    <!-- STARS -->
     <section class="section">
       <div class="sectionHead">
         <h2>星光许愿</h2>
@@ -183,7 +189,7 @@
         <div class="starStage">
           <canvas id="stars" width="980" height="420"></canvas>
           <div class="starOverlay" aria-hidden="true">
-            <img src="assets/img/linebouquet.webp" alt="" loading="lazy" decoding="async" />
+            <img src="assets/img/linebouquet.webp" alt="" loading="lazy" decoding="async" width="1200" height="1200" />
           </div>
         </div>
 
@@ -191,7 +197,7 @@
       </div>
     </section>
 
-    <!-- whispers -->
+    <!-- WHISPERS -->
     <section class="section">
       <div class="sectionHead">
         <h2>轻语</h2>
