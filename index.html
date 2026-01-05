@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>生日快乐 · 小雨</title>
+  <meta name="description" content="把这份祝福，轻轻交到你手上。" />
+
+  <meta property="og:title" content="生日快乐 · 小雨" />
+  <meta property="og:description" content="把这份祝福，轻轻交到你手上。" />
+  <meta property="og:image" content="assets/img/og.jpg" />
+  <meta property="og:type" content="website" />
+
+  <link rel="preload" href="assets/img/hero.webp" as="image" />
+  <link rel="preload" href="assets/img/petals.webp" as="image" />
+  <link rel="preload" href="assets/img/texture.webp" as="image" />
+  <link rel="preload" href="assets/audio/bgm.mp3" as="audio" />
+
+  <link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+
+<body>
+  <!-- ambient layers -->
+  <div class="bg" aria-hidden="true">
+    <canvas id="petals"></canvas>
+    <div class="spotlight" id="spotlight"></div>
+    <div class="grain"></div>
+    <img class="texture" src="assets/img/texture.webp" alt="" />
+  </div>
+
+  <!-- GLOBAL fireworks overlay (whole-page) -->
+  <div class="fx" aria-hidden="true">
+    <canvas id="fireworksGlobal"></canvas>
+  </div>
+
+  <!-- audio: best-effort autoplay -->
+  <audio id="bgm" preload="auto" loop autoplay muted playsinline>
+    <source src="assets/audio/bgm.mp3" type="audio/mpeg" />
+  </audio>
+
+  <!-- top bar -->
+  <header class="topbar">
+    <div class="topinner">
+      <div class="brand">
+        <button class="brandBtn" id="brandBtn" aria-label="回到顶部">
+          <span class="dot"></span>
+          <span class="brandText">For&nbsp;XiaoYu</span>
+        </button>
+      </div>
+
+      <nav class="nav">
+        <button class="pill" id="themeBtn" type="button">
+          <span class="pillIcon">⟡</span>
+          <span>柔光主题</span>
+        </button>
+
+        <button class="pill" id="shareBtn" type="button">
+          <span class="pillIcon">↗</span>
+          <span>分享</span>
+        </button>
+
+        <button class="pill primary pulse" id="musicBtn" type="button">
+          <span class="pillIcon" id="musicIcon">♪</span>
+          <span id="musicText">轻音乐</span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- hero -->
+    <section class="hero" id="top">
+      <div class="heroCard">
+        <div class="heroMeta">
+          <span class="tag">2026 · 01 · 03</span>
+          <span class="sep">·</span>
+          <span class="tag">农历 冬月十五</span>
+        </div>
+
+        <h1 class="title">
+          小雨
+          <span class="titleSub">生日快乐</span>
+        </h1>
+
+        <p class="lead">
+          愿你在新的一岁里，仍保有温柔的锋芒；把热爱藏进日常，把自由写进远方。
+        </p>
+
+        <div class="heroActions">
+          <button class="btn" id="openLetterBtn" type="button">打开信封</button>
+          <button class="btn ghost" id="scrollBtn" type="button">往下看看</button>
+        </div>
+
+        <div class="heroMedia">
+          <img src="assets/img/hero.webp" class="heroImg" alt="温柔明亮的花束主视觉" />
+          <div class="halo" aria-hidden="true"></div>
+        </div>
+
+        <div class="mini">
+          <div class="miniLeft">
+            <span class="miniDot"></span>
+            <span id="miniLine">一份很轻、很认真、只给你的祝福</span>
+          </div>
+          <div class="miniRight">
+            <canvas id="viz" width="160" height="36" aria-hidden="true"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- letter -->
+    <section class="section" id="letterSection">
+      <div class="sectionHead">
+        <h2>给你的一封信</h2>
+        <p>不喧哗，也不敷衍。</p>
+      </div>
+
+      <div class="envelope" id="envelope">
+        <div class="envTop"></div>
+        <div class="envBody">
+          <img class="sealImg" src="assets/img/seal.webp" alt="" />
+          <div class="envHint">点击打开</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- fireworks (buttons stay here, but fireworks render globally) -->
+    <section class="section" id="fireworksSection">
+      <div class="sectionHead">
+        <h2>把这一刻点亮</h2>
+        <p>像把祝福轻轻放进夜空里，让它慢慢散开。</p>
+      </div>
+
+      <div class="fireCard">
+        <div class="fireTop">
+          <div class="fireTitle">
+            <h3>柔光烟花 · 丝带慢门</h3>
+            <p>滚动到这里会自动点亮；你也可以随时点亮。</p>
+          </div>
+          <div class="fireBtns">
+            <button class="btn small" id="igniteBtn" type="button">点亮</button>
+            <button class="btn small ghost" id="igniteMoreBtn" type="button">再来一次</button>
+          </div>
+        </div>
+
+        <div class="fireStage">
+          <div class="fireStageHint">点亮后，烟花会在整页柔和绽放。</div>
+          <div class="fireOverlay" aria-hidden="true">
+            <img src="assets/img/linebouquet.webp" alt="" />
+          </div>
+        </div>
+
+        <p class="micro" id="fireLine"></p>
+      </div>
+    </section>
+
+    <!-- constellation -->
+    <section class="section">
+      <div class="sectionHead">
+        <h2>星光许愿</h2>
+        <p>点一点，把今晚的心情连成一张小小星图。</p>
+      </div>
+
+      <div class="constellation">
+        <div class="constTools">
+          <button class="btn small" id="clearStarsBtn" type="button">清空</button>
+          <button class="btn small ghost" id="saveStarsBtn" type="button">保存星图</button>
+        </div>
+
+        <div class="starStage">
+          <canvas id="stars" width="980" height="420"></canvas>
+          <div class="starOverlay" aria-hidden="true">
+            <img src="assets/img/linebouquet.webp" alt="" />
+          </div>
+        </div>
+
+        <p class="micro" id="starLine"></p>
+      </div>
+    </section>
+
+    <!-- whispers -->
+    <section class="section">
+      <div class="sectionHead">
+        <h2>轻语</h2>
+        <p>像把一束光，放进你今天的口袋里。</p>
+      </div>
+
+      <div class="whisper">
+        <div class="quoteCard">
+          <div class="quoteMark" aria-hidden="true">“</div>
+          <div class="quoteText" id="quoteText"></div>
+          <div class="quoteSign" id="quoteSign"></div>
+          <div class="quoteActions">
+            <button class="btn small" id="nextQuoteBtn" type="button">再读一句</button>
+            <button class="btn small ghost" id="copyQuoteBtn" type="button">复制这句</button>
+          </div>
+        </div>
+
+        <div class="noteCard">
+          <h3>专属祝愿</h3>
+          <p id="wishText"></p>
+
+          <div class="chips" id="chips">
+            <button class="chipBtn" type="button" data-k="明亮">明亮</button>
+            <button class="chipBtn" type="button" data-k="自由">自由</button>
+            <button class="chipBtn" type="button" data-k="浪漫">浪漫</button>
+            <button class="chipBtn" type="button" data-k="从容">从容</button>
+            <button class="chipBtn" type="button" data-k="好运">好运</button>
+          </div>
+
+          <div class="compose">
+            <button class="btn small ghost" id="newWishBtn" type="button">换一个</button>
+            <button class="btn small" id="composeBtn" type="button">生成一句</button>
+          </div>
+
+          <div class="composerOut" id="composerOut" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="footerCard">
+        <div class="footerLeft">
+          <div class="sig">—</div>
+          <div class="sigText">
+            <div class="sigLine">愿你所行皆坦途，所遇皆温柔。</div>
+            <div class="sigLine dim">生日快乐，小雨。</div>
+          </div>
+        </div>
+        <div class="footerRight">
+          <button class="pill" id="toTopBtn" type="button">
+            <span class="pillIcon">↑</span>
+            <span>回到开头</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- bottom small button -->
+      <div class="footerBottom">
+        <button class="pastBtn" id="pastBtn" type="button">分享过去</button>
+      </div>
+    </footer>
+  </main>
+
+  <!-- letter dialog -->
+  <dialog class="letterDlg" id="letterDlg">
+    <form method="dialog" class="letterBox">
+      <div class="letterHead">
+        <div class="letterTitle">
+          <div class="badge">To · 小雨</div>
+          <h3>生日快乐</h3>
+          <p>这封信不长，但每一句都认真。</p>
+        </div>
+        <button class="iconBtn" value="cancel" aria-label="关闭">✕</button>
+      </div>
+
+      <div class="letterBody" id="letterBody">
+        <p>小雨：</p>
+        <p>今天想把祝福写得更克制一点——像你喜欢的那种，不喧闹，但有分量。</p>
+        <p>愿你在新的一岁里，依然明亮，却不被打扰；依然温柔，却更有边界。把喜欢的事做成日常，把想要的生活慢慢兑现。</p>
+        <p>愿你在该坚定的时候坚定，在该松弛的时候松弛。愿你不必迎合任何风向，也能被世界认真偏爱。</p>
+        <p>如果这一天很忙，就把快乐先寄存在我这里；等你想起的时候，我再还给你。</p>
+        <p class="ending">生日快乐。愿你常明，也愿你有松风作伴。</p>
+        <p class="sign">— 明松</p>
+      </div>
+
+      <div class="letterFoot">
+        <button class="btn small ghost" id="copyLetterBtn" type="button">复制这封信</button>
+        <button class="btn small" value="ok" type="submit">收好</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- past dialog -->
+  <dialog class="pastDlg" id="pastDlg">
+    <form method="dialog" class="pastBox">
+      <div class="pastHead">
+        <h3>分享过去</h3>
+        <button class="iconBtn" value="cancel" aria-label="关闭">✕</button>
+      </div>
+
+      <div class="pastBody">
+        <div class="fileRow">
+          <div class="fileName">PDF.pdf</div>
+          <div class="fileMeta">点击打开或下载</div>
+        </div>
+
+        <div class="pastActions">
+          <a class="btn small ghost" href="PDF.pdf" target="_blank" rel="noopener">打开</a>
+          <a class="btn small" href="PDF.pdf" download="PDF.pdf">下载</a>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="assets/js/app.js"></script>
+</body>
+</html>
